@@ -2687,7 +2687,7 @@ impl SubsetError {
                 "Callable without `**kwargs` cannot be assigned to callable with `**kwargs: Unpack[{td}]`, because `{td}` is not closed and may have additional unknown keys"
             )),
             SubsetError::BoundMethodMissingSelf(function) => Some(format!(
-                "Function `{function}` is treated as a method when accessed from an instance, but its signature does not accept a bound `self` argument"
+                "Function `{function}` is treated as a bound method when accessed from an instance, but its signature does not accept a `self` argument"
             )),
             SubsetError::Other => None,
         }

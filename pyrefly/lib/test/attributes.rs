@@ -320,19 +320,26 @@ def foo(x: Callable[[int], str], c: C, c2: C2, c3: C3):
 );
 
 testcase!(
-    test_classvar_callable_return_bound_method_error,
+    test_boundmethod_return_noself,
     r#"
 from typing import Callable, ClassVar
-
-def integer_factory() -> int:
-    return 1
-
 class A:
-    _factory: ClassVar[Callable[[], int]] = integer_factory
+    _factory: ClassVar[Callable[[], int]] = lambda: 1
 
-    @property
     def factory(self) -> Callable[[], int]:
-        return self._factory  # E: Function `_factory` is treated as a method when accessed from an instance, but its signature does not accept a bound `self` argument
+        return self._factory # E: Returned type `() -> int` is not assignable to declared return type `() -> int`
+    "#,
+);
+
+testcase!(
+    test_boundmethod_assign_noself,
+    r#"
+from typing import ClassVar, Callable
+class A:
+    _factory: ClassVar[Callable[[], int]] = lambda: 1
+
+    def factory(self):
+        fac: Callable[[], int] = self._factory # E: `() -> int` is not assignable to `() -> int`
     "#,
 );
 
