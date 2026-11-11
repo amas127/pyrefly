@@ -94,6 +94,45 @@ use crate::types::literal::Lit;
 use crate::types::types::CalleeKind;
 use crate::types::types::Type;
 
+/// Names that CPython's `typing._get_protocol_attrs` excludes from protocol members.
+/// This mirrors `typing.EXCLUDED_ATTRIBUTES` in CPython 3.15, plus
+/// `__callable_proto_members_only__`, which older versions exclude.
+const EXCLUDED_PROTOCOL_ATTRIBUTES: &[&str] = &[
+    "_MutableMapping__marker",
+    "__abstractmethods__",
+    "__annotate__",
+    "__annotate_func__",
+    "__annotations__",
+    "__annotations_cache__",
+    "__callable_proto_members_only__",
+    "__class_getitem__",
+    "__dict__",
+    "__doc__",
+    "__firstlineno__",
+    "__init__",
+    "__match_args__",
+    "__module__",
+    "__new__",
+    "__non_callable_proto_members__",
+    "__orig_bases__",
+    "__orig_class__",
+    "__parameters__",
+    "__protocol_attrs__",
+    "__slots__",
+    "__static_attributes__",
+    "__subclasshook__",
+    "__type_params__",
+    "__typing_is_deprecated_inherited_runtime_protocol__",
+    "__weakref__",
+    "_is_protocol",
+    "_is_runtime_protocol",
+];
+
+/// Whether CPython's `typing._get_protocol_attrs` excludes `name` from protocol members.
+fn is_excluded_protocol_attribute(name: &Name) -> bool {
+    name.as_str().starts_with("_abc_") || EXCLUDED_PROTOCOL_ATTRIBUTES.contains(&name.as_str())
+}
+
 #[derive(Debug, Clone)]
 struct ParsedBaseClass<'a> {
     class_object: Class,
@@ -203,8 +242,12 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
             )
         });
 
+        // A `__slots__` declaration determines whether a protocol has data members,
+        // so read it before computing protocol metadata.
+        let explicit_slots = self.explicit_slots(cls);
+
         // Compute data that depends on the `BaseClass` representation of base classes.
-        let initial_protocol_metadata = self.initial_protocol_metadata(cls, bases);
+        let initial_protocol_metadata = self.initial_protocol_metadata(cls, bases, &explicit_slots);
         let has_generic_base_class = bases.iter().any(|x| x.is_generic());
         let has_typed_dict_base_class = bases.iter().any(|x| x.is_typed_dict());
 
@@ -472,7 +515,6 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
             .iter()
             .find_map(|(decorator, _)| decorator.deprecation.clone());
 
-        let explicit_slots = self.explicit_slots(cls);
         let has_nonempty_explicit_slots = explicit_slots
             .slots_info()
             .is_some_and(|slots| !slots.names.is_empty());
@@ -755,6 +797,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         &self,
         cls: &Class,
         bases: &[BaseClass],
+        explicit_slots: &ExplicitSlots,
     ) -> Option<ProtocolMetadata> {
         if bases.iter().any(|x| {
             matches!(
@@ -765,11 +808,32 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                 })
             )
         }) {
+            // CPython excludes `__slots__` from protocol members. A non-empty
+            // declaration declares data attributes, so keep `__slots__` in the member
+            // set to mark the protocol as a data protocol. A declaration whose names
+            // cannot be resolved is assumed non-empty.
+            let slots_declare_data = match explicit_slots {
+                ExplicitSlots::Known(slots) => !slots.names.is_empty(),
+                ExplicitSlots::Unknown => true,
+                ExplicitSlots::Absent => false,
+            };
+            let members = self
+                .get_class_fields(cls)
+                .map(|fields| {
+                    fields
+                        .class_body_fields()
+                        .filter(|name| {
+                            if *name == &dunder::SLOTS {
+                                return slots_declare_data;
+                            }
+                            !is_excluded_protocol_attribute(name)
+                        })
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
             Some(ProtocolMetadata {
-                members: self
-                    .get_class_fields(cls)
-                    .map(|f| f.class_body_fields().cloned().collect())
-                    .unwrap_or_default(),
+                members,
                 is_runtime_checkable: false,
             })
         } else {

@@ -781,6 +781,7 @@ impl VisitTrait<Type> for DjangoReverseRelationIndex {
 #[derive(Clone, Debug, TypeEq, PartialEq, Eq)]
 pub struct ProtocolMetadata {
     /// All members of the protocol, excluding ones defined on `object` and not overridden in a subclass.
+    /// An empty `__slots__` declaration is not a member; a non-empty one is kept to mark a data protocol.
     pub members: SmallSet<Name>,
     /// Whether this protocol is decorated with @runtime_checkable
     pub is_runtime_checkable: bool,

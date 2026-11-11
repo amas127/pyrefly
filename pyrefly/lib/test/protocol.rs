@@ -1530,6 +1530,87 @@ issubclass(Implementation, DataOnlyProtocol)   # E: Protocol `DataOnlyProtocol` 
 );
 
 testcase!(
+    test_runtime_checkable_protocol_slots,
+    r#"
+from collections.abc import Buffer
+from typing import Protocol, SupportsInt, runtime_checkable
+
+@runtime_checkable
+class BufferProtocol(Protocol):
+    __slots__ = ()
+
+    def __buffer__(self, flags: int, /) -> memoryview: ...
+
+class BytesLike:
+    def __buffer__(self, flags: int, /) -> memoryview: ...
+
+# An empty `__slots__` declaration is not a protocol member.
+issubclass(BytesLike, BufferProtocol)
+issubclass(type(bytes()), BufferProtocol)
+
+# typeshed declares these runtime-checkable protocols with `__slots__ = ()`.
+issubclass(int, SupportsInt)
+issubclass(bytes, Buffer)
+
+# Dropping `__slots__` from the members lets the unsafe-overlap check run.
+class WrongBuffer:
+    def __buffer__(self, flags: int, /) -> bytes: ...
+isinstance(WrongBuffer(), BufferProtocol)  # E: Runtime checkable protocol `BufferProtocol` has an unsafe overlap with type `WrongBuffer`
+
+@runtime_checkable
+class DataWithEmptySlots(Protocol):
+    __slots__ = ()
+    name: str
+
+issubclass(BytesLike, DataWithEmptySlots)  # E: Protocol `DataWithEmptySlots` has non-method members and cannot be used with issubclass()
+
+# Non-empty slots declare data attributes, so the protocol is a data protocol.
+@runtime_checkable
+class NonEmptySlots(Protocol):
+    __slots__ = ("name",)
+
+    def __buffer__(self, flags: int, /) -> memoryview: ...
+
+issubclass(BytesLike, NonEmptySlots)  # E: Protocol `NonEmptySlots` has non-method members and cannot be used with issubclass()
+
+# A declaration whose names cannot be resolved is assumed to declare data attributes.
+SLOTS = ("name",)
+
+@runtime_checkable
+class DynamicSlots(Protocol):
+    __slots__ = SLOTS
+
+    def __buffer__(self, flags: int, /) -> memoryview: ...
+
+issubclass(BytesLike, DynamicSlots)  # E: Protocol `DynamicSlots` has non-method members and cannot be used with issubclass()
+"#,
+);
+
+testcase!(
+    test_runtime_checkable_protocol_excluded_attributes,
+    r#"
+from typing import Any, Protocol, runtime_checkable
+
+# CPython's `typing.EXCLUDED_ATTRIBUTES`, and names starting with `_abc_`, are not
+# protocol members even when the protocol declares them explicitly.
+@runtime_checkable
+class ProtocolWithDunders(Protocol):
+    __doc__: str | None
+    __module__: str
+    __annotations__: dict[str, Any]
+    __match_args__: tuple[str, ...]
+    _abc_marker: int
+
+    def m(self) -> None: ...
+
+class Impl:
+    def m(self) -> None: ...
+
+issubclass(Impl, ProtocolWithDunders)
+"#,
+);
+
+testcase!(
     test_runtime_checkable_non_protocol,
     r#"
 from typing import runtime_checkable
