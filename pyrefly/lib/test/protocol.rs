@@ -1905,11 +1905,11 @@ issubclass(Impl, AnnotationForm)  # E: Protocol `AnnotationForm` has non-method 
 "#,
 );
 
-// `__class_getitem__` is excluded from the runtime attribute set starting in
-// 3.9. On 3.8 it is an ordinary member, so a non-callable declaration is a
-// data member.
+// On 3.8 `__class_getitem__` is not excluded from the runtime attribute set.
+// An explicit non-callable binding shadows the inherited
+// `Generic.__class_getitem__` and makes the protocol a data protocol.
 testcase!(
-    test_runtime_checkable_excluded_class_getitem_3_8,
+    test_runtime_checkable_class_getitem_3_8_assignment,
     TestEnv::new_with_version(PythonVersion::new(3, 8, 0)),
     r#"
 from typing import Protocol, runtime_checkable
@@ -1926,6 +1926,7 @@ issubclass(Impl, P)  # E: Protocol `P` has non-method members and cannot be used
 "#,
 );
 
+// On 3.9+, CPython excludes the name, so the same assignment does not report.
 testcase!(
     test_runtime_checkable_excluded_class_getitem_3_9,
     TestEnv::new_with_version(PythonVersion::new(3, 9, 0)),
@@ -1944,10 +1945,12 @@ issubclass(Impl, P)
 "#,
 );
 
-// On 3.8 `__class_getitem__` is not in `_SPECIAL_NAMES`, so an annotation-only
-// declaration with a non-callable type is a data member. Classification is
-// declaration-based and does not look at the inherited `Generic` method.
+// On 3.8 `__class_getitem__` is not reserved, so an annotation-only declaration
+// is a protocol data member under the declaration-based model. CPython resolves
+// the inherited `Generic.__class_getitem__` and accepts it, so this is a
+// deliberate false positive.
 testcase!(
+    bug = "3.8 annotation-only form reports even though CPython resolves the inherited method",
     test_runtime_checkable_protocol_annotated_class_getitem_3_8,
     TestEnv::new_with_version(PythonVersion::new(3, 8, 0)),
     r#"
@@ -2033,6 +2036,7 @@ testcase!(
 from typing import Any, Protocol
 
 class P(Protocol):
+    __class_getitem__: object
     __doc__: str | None
     __module__: str
     __annotations__: dict[str, Any]
