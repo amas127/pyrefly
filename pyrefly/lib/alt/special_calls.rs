@@ -700,6 +700,15 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                                     all_members_present = false;
                                     break;
                                 }
+                                // Unsafe overlap requires the class to be statically
+                                // incompatible with the protocol. A name outside `members`
+                                // is not part of the protocol's static contract, so it
+                                // cannot contribute to an incompatibility. Slot-only names
+                                // land here because the runtime member set carries
+                                // presence, not a protocol-side type.
+                                if !class_info_protocol.members.contains(field_name) {
+                                    continue;
+                                }
                                 if let Err(subset_err) = self.is_protocol_subset_at_attr(
                                     object_type,
                                     &protocol_class_type,

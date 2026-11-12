@@ -2100,6 +2100,37 @@ isinstance(MissingSlotBadMethod(), SlotOnly)
 "#,
 );
 
+// A slot-only name participates in the presence check but has no
+// protocol-side type, so it must not be compared; other members still are.
+testcase!(
+    test_runtime_checkable_unsafe_overlap_slot_only_members,
+    r#"
+from typing import Protocol, runtime_checkable
+
+@runtime_checkable
+class SlotOnly(Protocol):
+    __slots__ = ("name",)
+    def m(self) -> int: ...
+
+class Annotated:
+    name: str
+    def m(self) -> int: ...
+
+class Assigned:
+    name: int = 1
+    def m(self) -> int: ...
+
+isinstance(Annotated(), SlotOnly)
+isinstance(Assigned(), SlotOnly)
+
+class BadMethod:
+    name: int = 1
+    def m(self) -> str: ...
+
+isinstance(BadMethod(), SlotOnly)  # E: Runtime checkable protocol `SlotOnly` has an unsafe overlap with type `BadMethod`
+"#,
+);
+
 testcase!(
     test_runtime_checkable_non_protocol,
     r#"
