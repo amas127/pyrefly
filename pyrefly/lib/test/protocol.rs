@@ -1578,11 +1578,11 @@ issubclass(BytesLike, NonEmptySlots)  # E: Protocol `NonEmptySlots` has non-meth
 "#,
 );
 
-// CPython's runtime check calls `callable(getattr(cls, name))`. An
-// annotation-only member has no class attribute, so a callable annotation is
-// still a data member.
+// The static model classifies a callable-typed member as a method member. An
+// annotation-only callable has no runtime class binding, so CPython would
+// treat it as data; that divergence is accepted.
 testcase!(
-    test_runtime_checkable_protocol_callable_data_member,
+    test_runtime_checkable_protocol_callable_annotation,
     r#"
 from typing import Callable, Protocol, runtime_checkable
 
@@ -1594,7 +1594,7 @@ class P(Protocol):
 class Impl:
     def m(self) -> None: ...
 
-issubclass(Impl, P)  # E: Protocol `P` has non-method members and cannot be used with issubclass()
+issubclass(Impl, P)
 "#,
 );
 
@@ -1628,6 +1628,46 @@ from typing import Protocol, runtime_checkable
 @runtime_checkable
 class P(Protocol):
     class Inner: ...
+    def m(self) -> None: ...
+
+class Impl:
+    def m(self) -> None: ...
+
+issubclass(Impl, P)
+"#,
+);
+
+// A class object and an instance with `__call__` are callable members.
+testcase!(
+    test_runtime_checkable_protocol_class_object_member,
+    r#"
+from typing import Protocol, runtime_checkable
+
+class Thing: ...
+
+@runtime_checkable
+class P(Protocol):
+    factory: type[Thing] = Thing
+    def m(self) -> None: ...
+
+class Impl:
+    def m(self) -> None: ...
+
+issubclass(Impl, P)
+"#,
+);
+
+testcase!(
+    test_runtime_checkable_protocol_callable_instance_member,
+    r#"
+from typing import Protocol, runtime_checkable
+
+class CallableThing:
+    def __call__(self) -> int: ...
+
+@runtime_checkable
+class P(Protocol):
+    factory: CallableThing = CallableThing()
     def m(self) -> None: ...
 
 class Impl:
@@ -1865,10 +1905,9 @@ issubclass(Impl, AnnotationForm)  # E: Protocol `AnnotationForm` has non-method 
 "#,
 );
 
-// `__class_getitem__` is always a static exclusion, but CPython only excludes it
-// from the runtime attribute set starting in 3.9. The assignment form shadows
-// the inherited `Generic.__class_getitem__`; the annotation form does not, so
-// only the assignment form raises on 3.8.
+// `__class_getitem__` is excluded from the runtime attribute set starting in
+// 3.9. On 3.8 it is an ordinary member, so a non-callable declaration is a
+// data member.
 testcase!(
     test_runtime_checkable_excluded_class_getitem_3_8,
     TestEnv::new_with_version(PythonVersion::new(3, 8, 0)),
@@ -1905,10 +1944,11 @@ issubclass(Impl, P)
 "#,
 );
 
-// An annotation-only name does not shadow the inherited `Generic` method, so
-// CPython 3.8 still accepts the runtime check.
+// On 3.8 `__class_getitem__` is not in `_SPECIAL_NAMES`, so an annotation-only
+// declaration with a non-callable type is a data member. Classification is
+// declaration-based and does not look at the inherited `Generic` method.
 testcase!(
-    test_runtime_checkable_protocol_annotation_inherited_callable,
+    test_runtime_checkable_protocol_annotated_class_getitem_3_8,
     TestEnv::new_with_version(PythonVersion::new(3, 8, 0)),
     r#"
 from typing import Protocol, runtime_checkable
@@ -1921,7 +1961,7 @@ class P(Protocol):
 class Impl:
     def m(self) -> None: ...
 
-issubclass(Impl, P)
+issubclass(Impl, P)  # E: Protocol `P` has non-method members and cannot be used with issubclass()
 "#,
 );
 

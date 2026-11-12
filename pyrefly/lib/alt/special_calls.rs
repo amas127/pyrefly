@@ -804,7 +804,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
             let class_type = self.as_class_type_unchecked(cls);
             let class_type = self.heap.mk_class_type(class_type);
             for field_name in &protocol_metadata.runtime_members {
-                if !self.runtime_member_is_callable(cls, &class_type, field_name, range) {
+                if !self.member_is_callable(cls, &class_type, field_name, range) {
                     return true;
                 }
             }
@@ -812,23 +812,21 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         false
     }
 
-    /// Whether `getattr(cls, name)` returns a callable value at runtime.
+    /// Whether a declared protocol member is a method member.
     ///
-    /// This is not the same question as whether the static attribute type is a
-    /// toplevel callable: annotation-only members have no class attribute,
-    /// property objects are not callable, and class objects are.
-    fn runtime_member_is_callable(
+    /// Classification uses the member declaration, not the runtime class
+    /// attribute lookup. A `def` and a nested class are method members; a
+    /// property is a data member even when its getter returns a callable. An
+    /// annotation-only member uses its annotation type.
+    fn member_is_callable(
         &self,
         cls: &Class,
         class_type: &Type,
         field_name: &Name,
         range: TextRange,
     ) -> bool {
-        let Some(field) = self.get_runtime_class_member(cls, field_name) else {
-            // `typing.Protocol` and `typing.Generic` are special forms and are
-            // absent from Pyrefly's MRO, but at runtime they provide
-            // `__class_getitem__` as a callable method.
-            return field_name == &dunder::CLASS_GETITEM;
+        let Some(field) = self.get_class_member(cls, field_name) else {
+            return false;
         };
         if field.is_property() {
             return false;
