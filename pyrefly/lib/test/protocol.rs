@@ -1578,6 +1578,65 @@ issubclass(BytesLike, NonEmptySlots)  # E: Protocol `NonEmptySlots` has non-meth
 "#,
 );
 
+// CPython's runtime check calls `callable(getattr(cls, name))`. An
+// annotation-only member has no class attribute, so a callable annotation is
+// still a data member.
+testcase!(
+    test_runtime_checkable_protocol_callable_data_member,
+    r#"
+from typing import Callable, Protocol, runtime_checkable
+
+@runtime_checkable
+class P(Protocol):
+    on_event: Callable[[str], None]
+    def m(self) -> None: ...
+
+class Impl:
+    def m(self) -> None: ...
+
+issubclass(Impl, P)  # E: Protocol `P` has non-method members and cannot be used with issubclass()
+"#,
+);
+
+// A property is a non-callable class attribute, even when its getter returns a
+// callable.
+testcase!(
+    test_runtime_checkable_protocol_property_member,
+    r#"
+from typing import Callable, Protocol, runtime_checkable
+
+@runtime_checkable
+class P(Protocol):
+    @property
+    def factory(self) -> Callable[[], int]: ...
+    def m(self) -> None: ...
+
+class Impl:
+    def m(self) -> None: ...
+
+issubclass(Impl, P)  # E: Protocol `P` has non-method members and cannot be used with issubclass()
+"#,
+);
+
+// A nested class is a callable class attribute, so it does not make the
+// protocol a data protocol.
+testcase!(
+    test_runtime_checkable_protocol_nested_class_member,
+    r#"
+from typing import Protocol, runtime_checkable
+
+@runtime_checkable
+class P(Protocol):
+    class Inner: ...
+    def m(self) -> None: ...
+
+class Impl:
+    def m(self) -> None: ...
+
+issubclass(Impl, P)
+"#,
+);
+
 // Unresolved `__slots__` is not treated as data. The runtime value may be
 // non-empty, but static analysis cannot prove it, so the diagnostic is suppressed.
 testcase!(
@@ -1807,7 +1866,9 @@ issubclass(Impl, AnnotationForm)  # E: Protocol `AnnotationForm` has non-method 
 );
 
 // `__class_getitem__` is always a static exclusion, but CPython only excludes it
-// from the runtime attribute set starting in 3.9.
+// from the runtime attribute set starting in 3.9. The assignment form shadows
+// the inherited `Generic.__class_getitem__`; the annotation form does not, so
+// only the assignment form raises on 3.8.
 testcase!(
     test_runtime_checkable_excluded_class_getitem_3_8,
     TestEnv::new_with_version(PythonVersion::new(3, 8, 0)),
@@ -1816,7 +1877,7 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class P(Protocol):
-    __class_getitem__: object
+    __class_getitem__ = 1
     def m(self) -> None: ...
 
 class Impl:
@@ -1829,6 +1890,26 @@ issubclass(Impl, P)  # E: Protocol `P` has non-method members and cannot be used
 testcase!(
     test_runtime_checkable_excluded_class_getitem_3_9,
     TestEnv::new_with_version(PythonVersion::new(3, 9, 0)),
+    r#"
+from typing import Protocol, runtime_checkable
+
+@runtime_checkable
+class P(Protocol):
+    __class_getitem__ = 1
+    def m(self) -> None: ...
+
+class Impl:
+    def m(self) -> None: ...
+
+issubclass(Impl, P)
+"#,
+);
+
+// An annotation-only name does not shadow the inherited `Generic` method, so
+// CPython 3.8 still accepts the runtime check.
+testcase!(
+    test_runtime_checkable_protocol_annotation_inherited_callable,
+    TestEnv::new_with_version(PythonVersion::new(3, 8, 0)),
     r#"
 from typing import Protocol, runtime_checkable
 

@@ -871,6 +871,35 @@ impl ClassField {
         matches!(&self.0, ClassFieldInner::InstanceAttribute { .. })
     }
 
+    /// Whether this field creates an entry in the class `__dict__` at runtime.
+    /// Annotation-only declarations and fields initialized only in instance
+    /// methods do not.
+    pub fn binds_class_attribute(&self) -> bool {
+        matches!(
+            self.initialization(),
+            ClassFieldInitialization::ClassBody(_) | ClassFieldInitialization::ClassMethod
+        )
+    }
+
+    pub fn is_method(&self) -> bool {
+        matches!(
+            &self.0,
+            ClassFieldInner::Method { .. } | ClassFieldInner::ProxyMethod { .. }
+        )
+    }
+
+    pub fn is_nested_class(&self) -> bool {
+        matches!(&self.0, ClassFieldInner::NestedClass { .. })
+    }
+
+    /// The value type of a class-body attribute, for runtime callability checks.
+    pub fn class_attribute_type(&self) -> Option<&Type> {
+        match &self.0 {
+            ClassFieldInner::ClassAttribute { ty, .. } => Some(ty),
+            _ => None,
+        }
+    }
+
     /// Returns true if this field can have the `@override` decorator applied to it.
     pub fn can_have_override_decorator(&self) -> bool {
         match &self.0 {
@@ -5327,6 +5356,22 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
     pub(crate) fn get_class_member(&self, cls: &Class, name: &Name) -> Option<Cow<'_, ClassField>> {
         self.get_class_member_with_defining_class(cls, name)
             .map(|member| member.value)
+    }
+
+    /// The class-level field that `getattr(cls, name)` would return at runtime.
+    /// Annotation-only declarations and fields initialized only in instance
+    /// methods are not in the class `__dict__`, so the MRO walk skips them and
+    /// continues to bases.
+    pub fn get_runtime_class_member(
+        &self,
+        cls: &Class,
+        name: &Name,
+    ) -> Option<Cow<'_, ClassField>> {
+        self.get_field_from_mro(cls, name, &|c, name| {
+            self.get_field_from_current_class_only(c, name)
+                .filter(|field| field.binds_class_attribute())
+        })
+        .map(|member| member.value)
     }
 
     pub fn get_instance_attribute(&self, cls: &ClassType, name: &Name) -> Option<ClassAttribute> {

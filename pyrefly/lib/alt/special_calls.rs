@@ -804,23 +804,65 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
             let class_type = self.as_class_type_unchecked(cls);
             let class_type = self.heap.mk_class_type(class_type);
             for field_name in &protocol_metadata.runtime_members {
-                let ty = self.type_of_attr_get(
-                    &class_type,
-                    field_name,
-                    range,
-                    &self.error_swallower(),
-                    ErrorKind::MissingAttribute,
-                    None,
-                    "is_data_protocol",
-                );
-
-                // If it's not a callable type, it's a data member
-                if !ty.is_toplevel_callable() {
+                if !self.runtime_member_is_callable(cls, &class_type, field_name, range) {
                     return true;
                 }
             }
         }
         false
+    }
+
+    /// Whether `getattr(cls, name)` returns a callable value at runtime.
+    ///
+    /// This is not the same question as whether the static attribute type is a
+    /// toplevel callable: annotation-only members have no class attribute,
+    /// property objects are not callable, and class objects are.
+    fn runtime_member_is_callable(
+        &self,
+        cls: &Class,
+        class_type: &Type,
+        field_name: &Name,
+        range: TextRange,
+    ) -> bool {
+        let Some(field) = self.get_runtime_class_member(cls, field_name) else {
+            // `typing.Protocol` and `typing.Generic` are special forms and are
+            // absent from Pyrefly's MRO, but at runtime they provide
+            // `__class_getitem__` as a callable method.
+            return field_name == &dunder::CLASS_GETITEM;
+        };
+        if field.is_property() {
+            return false;
+        }
+        if field.is_method() || field.is_nested_class() {
+            return true;
+        }
+        if let Some(ty) = field.class_attribute_type() {
+            return self.is_runtime_callable(ty);
+        }
+        // Descriptors and other class-level values keep the class-access
+        // classification, which models `__get__` for descriptors.
+        self.type_of_attr_get(
+            class_type,
+            field_name,
+            range,
+            &self.error_swallower(),
+            ErrorKind::MissingAttribute,
+            None,
+            "is_data_protocol",
+        )
+        .is_toplevel_callable()
+    }
+
+    /// Runtime `callable()` semantics for a value type.
+    fn is_runtime_callable(&self, ty: &Type) -> bool {
+        if ty.is_toplevel_callable() {
+            return true;
+        }
+        match ty {
+            Type::ClassDef(_) | Type::SpecializedClassDef(_) | Type::Type(_) => true,
+            Type::ClassType(cls) => self.instance_as_dunder_call(cls).is_some(),
+            _ => false,
+        }
     }
 
     // isinstance(object, classinfo) / issubclass(class, classinfo)
