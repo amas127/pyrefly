@@ -100,7 +100,8 @@ use crate::types::types::Type;
 /// `typing._SPECIAL_NAMES`. These are attributes that every class gets from `object`
 /// or that the protocol implementation adds itself, so declaring them does not
 /// require an implementation. `_abc_*` names are ABCMeta implementation details;
-/// mypy does not exclude them, so they remain static protocol members.
+/// mypy does not exclude them, so they remain static protocol members even though
+/// CPython skips the prefix at runtime.
 const SPECIAL_NAMES: &[&str] = &[
     "__abstractmethods__",
     "__annotations__",
@@ -117,7 +118,8 @@ const SPECIAL_NAMES: &[&str] = &[
 
 /// Names that CPython's `typing._get_protocol_attrs` excludes from the runtime
 /// attribute set of a protocol on every supported Python version. Names whose
-/// exclusion depends on the version are handled in `is_excluded_runtime_attribute`.
+/// exclusion depends on the version or on a prefix are handled in
+/// `is_excluded_runtime_attribute`.
 ///
 /// The overlap with `SPECIAL_NAMES` is intentional: static membership follows mypy
 /// while this table follows CPython, so do not derive one from the other.
@@ -146,12 +148,15 @@ const RUNTIME_EXCLUDED_ATTRIBUTES: &[&str] = &[
 /// The match arms cover the version-dependent names that a class body can declare.
 /// Names that only the compiler or the runtime injects are omitted; they never appear
 /// in a syntactic field list, and a user who writes one explicitly gets a residual
-/// false positive, which is accepted. `_abc_*` is not special-cased either: ABCMeta
-/// injects those names into class dictionaries, but a syntactic model never sees the
-/// injection, and an explicitly written `_abc_*` name is treated like any member.
+/// false positive, which is accepted.
 fn is_excluded_runtime_attribute(name: &Name, version: PythonVersion) -> bool {
     let name = name.as_str();
     if RUNTIME_EXCLUDED_ATTRIBUTES.contains(&name) {
+        return true;
+    }
+    // CPython skips `_abc_*` when collecting runtime protocol attributes; ABCMeta
+    // injects those names into class dictionaries.
+    if name.starts_with("_abc_") {
         return true;
     }
     match name {

@@ -1779,11 +1779,10 @@ issubclass(Impl, DictSlot)
 "#,
 );
 
-// CPython skips `_abc_*` when collecting runtime protocol members, but mypy does
-// not. Pyrefly follows mypy and treats an explicitly written `_abc_*` name as an
-// ordinary member, so this runtime false positive is accepted.
+// CPython skips `_abc_*` when collecting runtime protocol members, for both
+// annotations and slot names. The names remain static protocol members, matching
+// mypy.
 testcase!(
-    bug = "CPython skips explicitly written `_abc_*` names at runtime",
     test_runtime_checkable_protocol_abc_marker,
     r#"
 from typing import Protocol, runtime_checkable
@@ -1801,8 +1800,8 @@ class SlotNamed(Protocol):
 class Impl:
     def m(self) -> None: ...
 
-issubclass(Impl, Annotated)  # E: Protocol `Annotated` has non-method members and cannot be used with issubclass()
-issubclass(Impl, SlotNamed)  # E: Protocol `SlotNamed` has non-method members and cannot be used with issubclass()
+issubclass(Impl, Annotated)
+issubclass(Impl, SlotNamed)
 "#,
 );
 
