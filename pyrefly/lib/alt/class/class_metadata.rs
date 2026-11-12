@@ -14,6 +14,7 @@ use pyrefly_graph::index::Idx;
 use pyrefly_python::ast::Ast;
 use pyrefly_python::dunder;
 use pyrefly_python::short_identifier::ShortIdentifier;
+use pyrefly_python::sys_info::PythonVersion;
 use pyrefly_types::annotation::Annotation;
 use pyrefly_types::callable::Params;
 use pyrefly_types::known_class::KnownClass;
@@ -94,43 +95,71 @@ use crate::types::literal::Lit;
 use crate::types::types::CalleeKind;
 use crate::types::types::Type;
 
-/// Names that CPython's `typing._get_protocol_attrs` excludes from protocol members.
-/// This mirrors `typing.EXCLUDED_ATTRIBUTES` in CPython 3.15, plus
-/// `__callable_proto_members_only__`, which older versions exclude.
-const EXCLUDED_PROTOCOL_ATTRIBUTES: &[&str] = &[
-    "_MutableMapping__marker",
+/// Names excluded from the static protocol member set. This is mypy's
+/// `EXCLUDED_PROTOCOL_ATTRIBUTES` (`mypy/nodes.py`), which follows CPython 3.12's
+/// `typing._SPECIAL_NAMES`. These are attributes that every class gets from `object`
+/// or that the protocol implementation adds itself, so declaring them does not
+/// require an implementation. `_abc_*` names are ABCMeta implementation details;
+/// mypy does not exclude them, so they remain static protocol members.
+const SPECIAL_NAMES: &[&str] = &[
     "__abstractmethods__",
-    "__annotate__",
-    "__annotate_func__",
     "__annotations__",
-    "__annotations_cache__",
-    "__callable_proto_members_only__",
     "__class_getitem__",
     "__dict__",
     "__doc__",
-    "__firstlineno__",
     "__init__",
-    "__match_args__",
     "__module__",
     "__new__",
-    "__non_callable_proto_members__",
+    "__slots__",
+    "__subclasshook__",
+    "__weakref__",
+];
+
+/// Names that CPython's `typing._get_protocol_attrs` excludes from the runtime
+/// attribute set of a protocol on every supported Python version. Names whose
+/// exclusion depends on the version are handled in `is_excluded_runtime_attribute`.
+///
+/// The overlap with `SPECIAL_NAMES` is intentional: static membership follows mypy
+/// while this table follows CPython, so do not derive one from the other.
+const RUNTIME_EXCLUDED_ATTRIBUTES: &[&str] = &[
+    "_MutableMapping__marker",
+    "_is_protocol",
+    "_is_runtime_protocol",
+    "__abstractmethods__",
+    "__annotations__",
+    "__dict__",
+    "__doc__",
+    "__init__",
+    "__module__",
+    "__new__",
     "__orig_bases__",
     "__orig_class__",
     "__parameters__",
-    "__protocol_attrs__",
     "__slots__",
-    "__static_attributes__",
     "__subclasshook__",
-    "__type_params__",
-    "__typing_is_deprecated_inherited_runtime_protocol__",
     "__weakref__",
-    "_is_protocol",
-    "_is_runtime_protocol",
 ];
 
-/// Whether CPython's `typing._get_protocol_attrs` excludes `name` from protocol members.
-fn is_excluded_protocol_attribute(name: &Name) -> bool {
-    name.as_str().starts_with("_abc_") || EXCLUDED_PROTOCOL_ATTRIBUTES.contains(&name.as_str())
+/// Whether CPython's `typing._get_protocol_attrs` excludes `name` from the runtime
+/// attribute set of a protocol on `version`.
+///
+/// The match arms cover the version-dependent names that a class body can declare.
+/// Names that only the compiler or the runtime injects are omitted; they never appear
+/// in a syntactic field list, and a user who writes one explicitly gets a residual
+/// false positive, which is accepted. `_abc_*` is not special-cased either: ABCMeta
+/// injects those names into class dictionaries, but a syntactic model never sees the
+/// injection, and an explicitly written `_abc_*` name is treated like any member.
+fn is_excluded_runtime_attribute(name: &Name, version: PythonVersion) -> bool {
+    let name = name.as_str();
+    if RUNTIME_EXCLUDED_ATTRIBUTES.contains(&name) {
+        return true;
+    }
+    match name {
+        "__class_getitem__" => version.at_least(3, 9),
+        "__match_args__" => version.at_least(3, 13),
+        "__annotate__" | "__annotate_func__" | "__annotations_cache__" => version.at_least(3, 14),
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -242,8 +271,6 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
             )
         });
 
-        // A `__slots__` declaration determines whether a protocol has data members,
-        // so read it before computing protocol metadata.
         let explicit_slots = self.explicit_slots(cls);
 
         // Compute data that depends on the `BaseClass` representation of base classes.
@@ -769,7 +796,6 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         let ExprOrBinding::Expr(expr) = value.as_ref() else {
             return ExplicitSlots::Unknown;
         };
-
         fn name_of(expr: &Expr) -> Option<Name> {
             match expr {
                 Expr::StringLiteral(s) => Some(Name::new(s.value.to_str())),
@@ -784,8 +810,17 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                 .iter()
                 .map(|item| item.key.as_ref().and_then(name_of))
                 .collect(),
-            Expr::StringLiteral(s) => Some(iter::once(Name::new(s.value.to_str())).collect()),
-            _ => return ExplicitSlots::Unknown,
+            Expr::StringLiteral(s) => {
+                let value = s.value.to_str();
+                if value.is_empty() {
+                    // `__slots__ = ""` is invalid at class creation; treat it as
+                    // declaring no slots rather than a slot with an empty name.
+                    Some(SmallSet::new())
+                } else {
+                    Some(iter::once(Name::new(value)).collect())
+                }
+            }
+            _ => None,
         };
         match names {
             Some(names) => ExplicitSlots::Known(SlotsInfo { names }),
@@ -808,32 +843,38 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                 })
             )
         }) {
-            // CPython excludes `__slots__` from protocol members. A non-empty
-            // declaration declares data attributes, so keep `__slots__` in the member
-            // set to mark the protocol as a data protocol. A declaration whose names
-            // cannot be resolved is assumed non-empty.
-            let slots_declare_data = match explicit_slots {
-                ExplicitSlots::Known(slots) => !slots.names.is_empty(),
-                ExplicitSlots::Unknown => true,
-                ExplicitSlots::Absent => false,
-            };
-            let members = self
-                .get_class_fields(cls)
-                .map(|fields| {
-                    fields
-                        .class_body_fields()
-                        .filter(|name| {
-                            if *name == &dunder::SLOTS {
-                                return slots_declare_data;
-                            }
-                            !is_excluded_protocol_attribute(name)
-                        })
+            // CPython excludes the literal `__slots__` but exposes non-excluded slot
+            // names as runtime attributes. An unresolvable declaration proves no data
+            // slots, so no error is reported for it.
+            let version = self.bindings().sys_info().version();
+            let slot_runtime_members: SmallSet<Name> = explicit_slots
+                .slots_info()
+                .map(|slots| {
+                    slots
+                        .names
+                        .iter()
+                        .filter(|name| !is_excluded_runtime_attribute(name, version))
                         .cloned()
                         .collect()
                 })
                 .unwrap_or_default();
+            let has_data_slots = !slot_runtime_members.is_empty();
+            let mut members = SmallSet::new();
+            let mut runtime_members = slot_runtime_members;
+            if let Some(fields) = self.get_class_fields(cls) {
+                for name in fields.class_body_fields() {
+                    if !SPECIAL_NAMES.contains(&name.as_str()) {
+                        members.insert(name.clone());
+                    }
+                    if !is_excluded_runtime_attribute(name, version) {
+                        runtime_members.insert(name.clone());
+                    }
+                }
+            }
             Some(ProtocolMetadata {
                 members,
+                runtime_members,
+                has_data_slots,
                 is_runtime_checkable: false,
             })
         } else {
@@ -859,6 +900,10 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
                 {
                     if let Some(base_proto) = metadata.protocol_metadata() {
                         proto.members.extend(base_proto.members.iter().cloned());
+                        proto
+                            .runtime_members
+                            .extend(base_proto.runtime_members.iter().cloned());
+                        proto.has_data_slots |= base_proto.has_data_slots;
                         if base_proto.is_runtime_checkable {
                             proto.is_runtime_checkable = true;
                         }
