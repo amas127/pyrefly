@@ -1877,6 +1877,52 @@ issubclass(Impl, EmptyChild)
 "#,
 );
 
+// A slot in the child shadows an inherited method at runtime. The member type
+// alone resolves to the inherited callable, so the slot declaration must mark
+// the child as a data protocol.
+testcase!(
+    test_runtime_checkable_protocol_child_slot_shadows_inherited_method,
+    r#"
+from typing import Protocol, runtime_checkable
+
+@runtime_checkable
+class Base(Protocol):
+    def value(self) -> None: ...
+
+@runtime_checkable
+class Child(Base, Protocol):
+    __slots__ = ("value",)
+
+class Impl:
+    def value(self) -> None: ...
+
+issubclass(Impl, Child)  # E: Protocol `Child` has non-method members and cannot be used with issubclass()
+"#,
+);
+
+// A method in the child shadows an inherited slot at runtime, so CPython accepts
+// the check. The inherited flag still marks the child as data.
+testcase!(
+    bug = "A child method shadowing an inherited slot reports despite runtime acceptance",
+    test_runtime_checkable_protocol_inherited_slot_shadowed_by_method,
+    r#"
+from typing import Protocol, runtime_checkable
+
+@runtime_checkable
+class SlotBase(Protocol):
+    __slots__ = ("value",)
+
+@runtime_checkable
+class MethodChild(SlotBase, Protocol):
+    def value(self) -> None: ...
+
+class Impl:
+    def value(self) -> None: ...
+
+issubclass(Impl, MethodChild)  # E: Protocol `MethodChild` has non-method members and cannot be used with issubclass()
+"#,
+);
+
 // `__match_args__` is a real protocol member on 3.12 and excluded on 3.13+.
 // The slot and annotation forms share the same runtime predicate; the 3.13 side
 // is covered by `test_runtime_checkable_protocol_excluded_attributes`.
