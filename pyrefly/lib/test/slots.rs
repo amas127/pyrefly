@@ -212,6 +212,51 @@ class C:
 );
 
 testcase!(
+    test_slots_any_base_no_enforcement,
+    TestEnv::new().with_replace_imports_with_any(&["missing_dep"]),
+    r#"
+from typing import Any
+from missing_dep import Base
+
+class ExplicitAny(Any):
+    __slots__ = ("x",)
+
+    def __init__(self) -> None:
+        self.x = 1
+        self.y = 2  # OK: an explicit Any base has an unknown layout
+
+class Missing(Base):
+    __slots__ = ("x",)
+
+    def __init__(self) -> None:
+        self.x = 1
+        self.y = 2  # OK: the missing import is Any
+
+class Child(ExplicitAny):
+    __slots__ = ("z",)
+
+    def __init__(self) -> None:
+        self.z = 1
+        self.w = 2  # OK: has_base_any propagates to subclasses
+"#,
+);
+
+testcase!(
+    test_slots_unknown_base_no_enforcement,
+    r#"
+def make(cls: type):
+    class C(cls):
+        __slots__ = ("x",)
+
+        def __init__(self) -> None:
+            self.x = 1
+            self.y = 2  # OK: the base layout is unknown
+
+    return C
+"#,
+);
+
+testcase!(
     test_slots_property_setter_allowed,
     r#"
 class C:
@@ -253,6 +298,97 @@ class C:
 
     def __init__(self):
         self.x = 1
+"#,
+);
+
+testcase!(
+    test_slots_invalid_empty_string,
+    r#"
+class C:
+    __slots__ = ""  # E: `__slots__` must be identifiers
+
+    def __init__(self) -> None:
+        self.x = 1
+"#,
+);
+
+testcase!(
+    test_slots_invalid_nonempty_string,
+    r#"
+class C:
+    __slots__ = "a b"  # E: `__slots__` must be identifiers
+
+    def __init__(self) -> None:
+        self.x = 1
+"#,
+);
+
+testcase!(
+    test_slots_invalid_string_in_tuple,
+    r#"
+class C:
+    __slots__ = ("x", "")  # E: `__slots__` must be identifiers
+
+    def __init__(self) -> None:
+        self.x = 1
+        self.y = 2
+"#,
+);
+
+testcase!(
+    test_slots_invalid_string_in_list,
+    r#"
+class C:
+    __slots__ = ["", "x"]  # E: `__slots__` must be identifiers
+
+    def __init__(self) -> None:
+        self.x = 1
+        self.y = 2
+"#,
+);
+
+testcase!(
+    test_slots_invalid_string_in_dict,
+    r#"
+class C:
+    __slots__ = {"": "doc"}  # E: `__slots__` must be identifiers
+
+    def __init__(self) -> None:
+        self.x = 1
+"#,
+);
+
+testcase!(
+    test_slots_incomplete_mro_no_enforcement,
+    r#"
+class X:
+    __slots__ = ()
+
+class Y:
+    __slots__ = ()
+
+class A(X, Y):
+    __slots__ = ("a",)
+
+class B(Y, X):
+    __slots__ = ("b",)
+
+class C(A, B):  # E: Class `C` has a nonlinearizable inheritance chain detected at `X`  # E: Class `C` inherits from incompatible disjoint bases `A`, `B`
+    __slots__ = ("c",)
+
+    def __init__(self) -> None:
+        self.z = 1
+"#,
+);
+
+testcase!(
+    test_slots_keyword_name_is_valid,
+    r#"
+class C:
+    __slots__ = ("class",)
+
+class D:
+    __slots__ = "class"
 "#,
 );
 

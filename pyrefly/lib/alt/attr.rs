@@ -1312,6 +1312,16 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
     /// Returns `Some(allowed_names)` if slots enforcement should apply,
     /// `None` if slots enforcement is disabled.
     pub(crate) fn effective_slots_for_instance_write(&self, cls: &Class) -> Option<SmallSet<Name>> {
+        // An `Any` or otherwise unresolved base makes the instance layout unknown:
+        // a class that looks slotted locally may still inherit an instance `__dict__`.
+        // An incomplete MRO likewise gives only a recovery prefix of ancestors, so
+        // the union of slot names would be incomplete. Skip enforcement in both cases.
+        let metadata = self.get_metadata_for_class(cls);
+        let mro = self.get_mro_for_class(cls);
+        if metadata.has_base_any() || !mro.linearization_complete() {
+            return None;
+        }
+
         if self.has_custom_setattr(cls) {
             return None;
         }
@@ -1325,7 +1335,6 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
             all_slot_names.insert(name);
         }
 
-        let mro = self.get_mro_for_class(cls);
         for ancestor in mro.ancestors_no_object() {
             let Some((names, false)) = self.extract_local_slot_names(ancestor.class_object())
             else {

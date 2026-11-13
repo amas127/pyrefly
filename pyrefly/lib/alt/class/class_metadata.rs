@@ -5,14 +5,13 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::iter;
-
 use dupe::Dupe;
 use dupe::IterDupedExt;
 use itertools::Itertools;
 use pyrefly_graph::index::Idx;
 use pyrefly_python::ast::Ast;
 use pyrefly_python::dunder;
+use pyrefly_python::module_name::is_python_identifier;
 use pyrefly_python::short_identifier::ShortIdentifier;
 use pyrefly_python::sys_info::PythonVersion;
 use pyrefly_types::annotation::Annotation;
@@ -277,7 +276,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
             )
         });
 
-        let explicit_slots = self.explicit_slots(cls);
+        let explicit_slots = self.explicit_slots(cls, errors);
 
         // Compute data that depends on the `BaseClass` representation of base classes.
         let initial_protocol_metadata = self.initial_protocol_metadata(cls, bases, &explicit_slots);
@@ -790,7 +789,10 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
             .find_map(|base| self.find_inherited_init_subclass(base, seen))
     }
 
-    fn explicit_slots(&self, cls: &Class) -> ExplicitSlots {
+    /// Extract slot names from a literal `__slots__` declaration. An invalid
+    /// string literal is reported and makes the entire declaration unknown,
+    /// because CPython never creates the class.
+    fn explicit_slots(&self, cls: &Class, errors: &ErrorCollector) -> ExplicitSlots {
         let key = KeyClassField(cls.index(), dunder::SLOTS.clone());
         let Some(idx) = self.bindings().key_to_idx_hashed_opt(Hashed::new(&key)) else {
             return ExplicitSlots::Absent;
@@ -802,35 +804,68 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         let ExprOrBinding::Expr(expr) = value.as_ref() else {
             return ExplicitSlots::Unknown;
         };
-        fn name_of(expr: &Expr) -> Option<Name> {
-            match expr {
-                Expr::StringLiteral(s) => Some(Name::new(s.value.to_str())),
-                _ => None,
+        let slot_name = |expr: &Expr, errors: &ErrorCollector| -> Option<Name> {
+            let Expr::StringLiteral(s) = expr else {
+                return None;
+            };
+            let value = s.value.to_str();
+            if is_python_identifier(value) {
+                Some(Name::new(value))
+            } else {
+                self.error(
+                    errors,
+                    expr.range(),
+                    ErrorKind::BadClassDefinition,
+                    "`__slots__` must be identifiers".to_owned(),
+                );
+                None
             }
-        }
-        let names: Option<SmallSet<Name>> = match expr {
-            Expr::Tuple(t) => t.elts.iter().map(name_of).collect(),
-            Expr::List(l) => l.elts.iter().map(name_of).collect(),
-            Expr::Dict(d) => d
-                .items
-                .iter()
-                .map(|item| item.key.as_ref().and_then(name_of))
-                .collect(),
-            Expr::StringLiteral(s) => {
-                let value = s.value.to_str();
-                if value.is_empty() {
-                    // `__slots__ = ""` is invalid at class creation; treat it as
-                    // declaring no slots rather than a slot with an empty name.
-                    Some(SmallSet::new())
-                } else {
-                    Some(iter::once(Name::new(value)).collect())
+        };
+        let mut names = SmallSet::new();
+        let mut all_literals = true;
+        match expr {
+            Expr::Tuple(t) => {
+                for elt in &t.elts {
+                    match slot_name(elt, errors) {
+                        Some(name) => {
+                            names.insert(name);
+                        }
+                        None => all_literals = false,
+                    }
                 }
             }
-            _ => None,
-        };
-        match names {
-            Some(names) => ExplicitSlots::Known(SlotsInfo { names }),
-            None => ExplicitSlots::Unknown,
+            Expr::List(l) => {
+                for elt in &l.elts {
+                    match slot_name(elt, errors) {
+                        Some(name) => {
+                            names.insert(name);
+                        }
+                        None => all_literals = false,
+                    }
+                }
+            }
+            Expr::Dict(d) => {
+                for item in &d.items {
+                    match item.key.as_ref().and_then(|key| slot_name(key, errors)) {
+                        Some(name) => {
+                            names.insert(name);
+                        }
+                        None => all_literals = false,
+                    }
+                }
+            }
+            Expr::StringLiteral(_) => match slot_name(expr, errors) {
+                Some(name) => {
+                    names.insert(name);
+                }
+                None => all_literals = false,
+            },
+            _ => return ExplicitSlots::Unknown,
+        }
+        if all_literals {
+            ExplicitSlots::Known(SlotsInfo { names })
+        } else {
+            ExplicitSlots::Unknown
         }
     }
 

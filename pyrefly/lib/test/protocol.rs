@@ -1710,8 +1710,8 @@ issubclass(Impl, ConstantSlots)
 "#,
 );
 
-// A string `__slots__` declares one slot, except for the invalid empty string,
-// which declares none.
+// A string `__slots__` declares one slot. The invalid empty string is reported
+// and does not prove a data slot, because the class is never created.
 testcase!(
     test_runtime_checkable_protocol_string_slots,
     r#"
@@ -1719,7 +1719,7 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class EmptyStringSlot(Protocol):
-    __slots__ = ""
+    __slots__ = ""  # E: `__slots__` must be identifiers
 
     def m(self) -> None: ...
 
