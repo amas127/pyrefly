@@ -1314,8 +1314,9 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
     pub(crate) fn effective_slots_for_instance_write(&self, cls: &Class) -> Option<SmallSet<Name>> {
         // An `Any` or otherwise unresolved base makes the instance layout unknown:
         // a class that looks slotted locally may still inherit an instance `__dict__`.
-        // An incomplete MRO likewise gives only a recovery prefix of ancestors, so
-        // the union of slot names would be incomplete. Skip enforcement in both cases.
+        // An incomplete MRO gives only a recovery prefix of ancestors, and a cyclic or
+        // recursive MRO gives none, so the union of slot names would be incomplete.
+        // Skip enforcement in both cases.
         let metadata = self.get_metadata_for_class(cls);
         let mro = self.get_mro_for_class(cls);
         if metadata.has_base_any() || !mro.linearization_complete() {

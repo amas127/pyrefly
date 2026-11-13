@@ -821,12 +821,12 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         false
     }
 
-    /// Whether a declared protocol member is a method member.
+    /// Whether a protocol member is a method member.
     ///
-    /// Classification uses the member declaration, not the runtime class
-    /// attribute lookup. A `def` and a nested class are method members; a
-    /// property is a data member even when its getter returns a callable. An
-    /// annotation-only member uses its annotation type.
+    /// Methods and nested classes are method members. A property is a data member
+    /// even when its getter returns a callable. A class attribute is classified by
+    /// its declared type. A descriptor falls back to class access, which models
+    /// `__get__`.
     fn member_is_callable(
         &self,
         cls: &Class,
@@ -860,7 +860,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         .is_toplevel_callable()
     }
 
-    /// Runtime `callable()` semantics for a value type.
+    /// Whether a class-body value of this type is callable at runtime.
     fn is_runtime_callable(&self, ty: &Type) -> bool {
         if ty.is_toplevel_callable() {
             return true;

@@ -882,7 +882,8 @@ impl ClassField {
         matches!(&self.0, ClassFieldInner::NestedClass { .. })
     }
 
-    /// The value type of a class-body attribute, for runtime callability checks.
+    /// The type of a class attribute, for runtime callability checks. Returns
+    /// `None` for fields that are not class attributes.
     pub fn class_attribute_type(&self) -> Option<&Type> {
         match &self.0 {
             ClassFieldInner::ClassAttribute { ty, .. } => Some(ty),

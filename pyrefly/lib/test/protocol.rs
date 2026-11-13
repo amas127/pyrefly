@@ -2073,8 +2073,8 @@ q: AbcName = Impl()  # E: `Impl` is not assignable to `AbcName`
 "#,
 );
 
-// mypy's exclusion list is not required in static protocol members. A real data
-// member still fails, so this test cannot pass vacuously.
+// Names in mypy's exclusion list are not required static protocol members. A
+// real data member still fails, so this test cannot pass vacuously.
 testcase!(
     test_protocol_static_special_names_excluded,
     r#"

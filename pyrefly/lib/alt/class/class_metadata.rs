@@ -96,11 +96,11 @@ use crate::types::types::Type;
 
 /// Names excluded from the static protocol member set. This is mypy's
 /// `EXCLUDED_PROTOCOL_ATTRIBUTES` (`mypy/nodes.py`), which follows CPython 3.12's
-/// `typing._SPECIAL_NAMES`. These are attributes that every class gets from `object`
-/// or that the protocol implementation adds itself, so declaring them does not
-/// require an implementation. `_abc_*` names are ABCMeta implementation details;
-/// mypy does not exclude them, so they remain static protocol members even though
-/// CPython skips the prefix at runtime.
+/// `typing._SPECIAL_NAMES`. These are attributes that a class gets from `object`,
+/// `ABCMeta`, `Generic`, or the compiler, or that a protocol body declares for its
+/// own layout, so declaring them does not require an implementation. `_abc_*`
+/// names are ABCMeta implementation details; mypy does not exclude them, so they
+/// remain static protocol members even though CPython skips the prefix at runtime.
 const EXCLUDED_PROTOCOL_ATTRIBUTES: &[&str] = &[
     "__abstractmethods__",
     "__annotations__",
@@ -116,8 +116,8 @@ const EXCLUDED_PROTOCOL_ATTRIBUTES: &[&str] = &[
 ];
 
 /// Names that CPython's `typing._get_protocol_attrs` excludes from the runtime
-/// attribute set of a protocol on every supported Python version. Names whose
-/// exclusion depends on the version or on a prefix are handled in
+/// attribute set of a protocol on every version that provides `typing.Protocol`.
+/// Names whose exclusion depends on the version or on a prefix are handled in
 /// `is_excluded_runtime_attribute`.
 ///
 /// The overlap with `EXCLUDED_PROTOCOL_ATTRIBUTES` is intentional: static
@@ -145,10 +145,12 @@ const RUNTIME_EXCLUDED_ATTRIBUTES: &[&str] = &[
 /// Whether CPython's `typing._get_protocol_attrs` excludes `name` from the runtime
 /// attribute set of a protocol on `version`.
 ///
-/// The match arms cover the version-dependent names that a class body can declare.
-/// Names that only the compiler or the runtime injects are omitted; they never appear
-/// in a syntactic field list, and a user who writes one explicitly gets a residual
-/// false positive, which is accepted.
+/// The match arms cover the names a class body can declare directly. Names that
+/// are injected by the runtime, the compiler, or a decorator, such as
+/// `__static_attributes__`, `__non_callable_proto_members__`, and `__final__`,
+/// are omitted: gating them would add micro-version windows for names that
+/// ordinary code does not write. An explicit write therefore keeps the name in
+/// the runtime set and produces a residual false positive, which is accepted.
 fn is_excluded_runtime_attribute(name: &Name, version: PythonVersion) -> bool {
     let name = name.as_str();
     if RUNTIME_EXCLUDED_ATTRIBUTES.contains(&name) {
@@ -901,8 +903,8 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
             )
         }) {
             // CPython excludes the literal `__slots__` but exposes non-excluded slot
-            // names as runtime attributes. An unresolvable declaration proves no data
-            // slots, so no error is reported for it.
+            // names as runtime attributes. An unresolvable declaration cannot prove
+            // data slots, so no error is reported for it.
             let version = self.bindings().sys_info().version();
             let slot_runtime_members: SmallSet<Name> = explicit_slots
                 .slots_info()

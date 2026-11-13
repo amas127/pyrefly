@@ -781,18 +781,20 @@ impl VisitTrait<Type> for DjangoReverseRelationIndex {
 #[derive(Clone, Debug, TypeEq, PartialEq, Eq)]
 pub struct ProtocolMetadata {
     /// The static members of the protocol, used by structural subtyping. These are
-    /// the class body fields that are not in `EXCLUDED_PROTOCOL_ATTRIBUTES`. Names
-    /// the runtime check excludes, such as `_abc_*` and `__match_args__` from 3.13,
-    /// are still static members.
+    /// the class body fields that are not in `EXCLUDED_PROTOCOL_ATTRIBUTES`, plus
+    /// the members inherited from protocol bases. Names the runtime check excludes,
+    /// such as `_abc_*` and `__match_args__` from 3.13, are still static members.
     pub members: SmallSet<Name>,
     /// The runtime attribute names CPython's protocol checks inspect, used by the
     /// runtime `isinstance`/`issubclass` checks. This includes non-excluded slot
-    /// names and is version-aware; it never contains the literal `__slots__`.
+    /// names and inherited protocol members, and is version-aware; it never
+    /// contains the literal `__slots__`.
     pub runtime_members: SmallSet<Name>,
-    /// Whether `__slots__` provably declares at least one slot name that CPython's
-    /// runtime attribute filter keeps, which makes the protocol a data protocol. An
+    /// Whether this protocol or an inherited protocol base declares at least one
+    /// `__slots__` name that CPython's runtime attribute filter keeps. An
     /// unresolvable declaration does not count as data because no runtime
-    /// `TypeError` can be established for it.
+    /// `TypeError` can be established for it. A child method that shadows an
+    /// inherited slot is still reported as data (a known gap).
     pub has_data_slots: bool,
     /// Whether this protocol is decorated with @runtime_checkable
     pub is_runtime_checkable: bool,
