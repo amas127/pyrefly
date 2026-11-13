@@ -781,8 +781,9 @@ impl VisitTrait<Type> for DjangoReverseRelationIndex {
 #[derive(Clone, Debug, TypeEq, PartialEq, Eq)]
 pub struct ProtocolMetadata {
     /// The static members of the protocol, used by structural subtyping. These are
-    /// the class body fields that are not in `SPECIAL_NAMES`; runtime-only attributes
-    /// such as `__match_args__` and `_abc_*` names are still static members.
+    /// the class body fields that are not in `EXCLUDED_PROTOCOL_ATTRIBUTES`. Names
+    /// the runtime check excludes, such as `_abc_*` and `__match_args__` from 3.13,
+    /// are still static members.
     pub members: SmallSet<Name>,
     /// The runtime attribute names CPython's protocol checks inspect, used by the
     /// runtime `isinstance`/`issubclass` checks. This includes non-excluded slot

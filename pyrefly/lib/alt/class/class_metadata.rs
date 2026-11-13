@@ -102,7 +102,7 @@ use crate::types::types::Type;
 /// require an implementation. `_abc_*` names are ABCMeta implementation details;
 /// mypy does not exclude them, so they remain static protocol members even though
 /// CPython skips the prefix at runtime.
-const SPECIAL_NAMES: &[&str] = &[
+const EXCLUDED_PROTOCOL_ATTRIBUTES: &[&str] = &[
     "__abstractmethods__",
     "__annotations__",
     "__class_getitem__",
@@ -121,8 +121,9 @@ const SPECIAL_NAMES: &[&str] = &[
 /// exclusion depends on the version or on a prefix are handled in
 /// `is_excluded_runtime_attribute`.
 ///
-/// The overlap with `SPECIAL_NAMES` is intentional: static membership follows mypy
-/// while this table follows CPython, so do not derive one from the other.
+/// The overlap with `EXCLUDED_PROTOCOL_ATTRIBUTES` is intentional: static
+/// membership follows mypy while this table follows CPython, so do not derive one
+/// from the other.
 const RUNTIME_EXCLUDED_ATTRIBUTES: &[&str] = &[
     "_MutableMapping__marker",
     "_is_protocol",
@@ -868,7 +869,7 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
             let mut runtime_members = slot_runtime_members;
             if let Some(fields) = self.get_class_fields(cls) {
                 for name in fields.class_body_fields() {
-                    if !SPECIAL_NAMES.contains(&name.as_str()) {
+                    if !EXCLUDED_PROTOCOL_ATTRIBUTES.contains(&name.as_str()) {
                         members.insert(name.clone());
                     }
                     if !is_excluded_runtime_attribute(name, version) {
