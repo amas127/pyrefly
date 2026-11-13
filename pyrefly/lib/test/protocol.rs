@@ -1548,7 +1548,7 @@ class BytesLike:
 
 # An empty `__slots__` declaration is not a protocol member.
 issubclass(BytesLike, BufferProtocol)
-issubclass(type(bytes()), BufferProtocol)
+issubclass(bytes, BufferProtocol)
 
 # typeshed declares these runtime-checkable protocols with `__slots__ = ()`.
 issubclass(int, SupportsInt)
