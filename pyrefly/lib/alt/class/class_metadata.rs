@@ -790,8 +790,9 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
     }
 
     /// Extract slot names from a literal `__slots__` declaration. An invalid
-    /// string literal is reported and makes the entire declaration unknown,
-    /// because CPython never creates the class.
+    /// string literal, or an element whose type is statically not `str`, is
+    /// reported and makes the entire declaration unknown, because CPython never
+    /// creates the class.
     fn explicit_slots(&self, cls: &Class, errors: &ErrorCollector) -> ExplicitSlots {
         let key = KeyClassField(cls.index(), dunder::SLOTS.clone());
         let Some(idx) = self.bindings().key_to_idx_hashed_opt(Hashed::new(&key)) else {
@@ -804,62 +805,27 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         let ExprOrBinding::Expr(expr) = value.as_ref() else {
             return ExplicitSlots::Unknown;
         };
-        let slot_name = |expr: &Expr, errors: &ErrorCollector| -> Option<Name> {
-            let Expr::StringLiteral(s) = expr else {
-                return None;
-            };
-            let value = s.value.to_str();
-            if is_python_identifier(value) {
-                Some(Name::new(value))
-            } else {
-                self.error(
-                    errors,
-                    expr.range(),
-                    ErrorKind::BadClassDefinition,
-                    "`__slots__` must be identifiers".to_owned(),
-                );
-                None
-            }
-        };
         let mut names = SmallSet::new();
         let mut all_literals = true;
         match expr {
             Expr::Tuple(t) => {
                 for elt in &t.elts {
-                    match slot_name(elt, errors) {
-                        Some(name) => {
-                            names.insert(name);
-                        }
-                        None => all_literals = false,
-                    }
+                    all_literals &= self.add_slot_name(Some(elt), &mut names, errors);
                 }
             }
             Expr::List(l) => {
                 for elt in &l.elts {
-                    match slot_name(elt, errors) {
-                        Some(name) => {
-                            names.insert(name);
-                        }
-                        None => all_literals = false,
-                    }
+                    all_literals &= self.add_slot_name(Some(elt), &mut names, errors);
                 }
             }
             Expr::Dict(d) => {
                 for item in &d.items {
-                    match item.key.as_ref().and_then(|key| slot_name(key, errors)) {
-                        Some(name) => {
-                            names.insert(name);
-                        }
-                        None => all_literals = false,
-                    }
+                    all_literals &= self.add_slot_name(item.key.as_ref(), &mut names, errors);
                 }
             }
-            Expr::StringLiteral(_) => match slot_name(expr, errors) {
-                Some(name) => {
-                    names.insert(name);
-                }
-                None => all_literals = false,
-            },
+            Expr::StringLiteral(_) => {
+                all_literals = self.add_slot_name(Some(expr), &mut names, errors);
+            }
             _ => return ExplicitSlots::Unknown,
         }
         if all_literals {
@@ -867,6 +833,56 @@ impl<'ctx, 'answer, Ans: LookupAnswer> AnswersSolver<'ctx, 'answer, Ans> {
         } else {
             ExplicitSlots::Unknown
         }
+    }
+
+    /// Add the slot name declared by one `__slots__` element to `names`, and
+    /// report the element when it makes class creation fail.
+    ///
+    /// Returns `true` only for a string literal with a valid identifier. A
+    /// `None` element is a `**mapping` entry. An element whose type is not `str`
+    /// is reported; a dynamic `str` element cannot be checked and is not a
+    /// literal.
+    fn add_slot_name(
+        &self,
+        element: Option<&Expr>,
+        names: &mut SmallSet<Name>,
+        errors: &ErrorCollector,
+    ) -> bool {
+        let Some(expr) = element else {
+            return false;
+        };
+        if let Expr::StringLiteral(s) = expr {
+            let value = s.value.to_str();
+            if is_python_identifier(value) {
+                names.insert(Name::new(value));
+                return true;
+            }
+            self.error(
+                errors,
+                expr.range(),
+                ErrorKind::BadClassDefinition,
+                "`__slots__` must be identifiers".to_owned(),
+            );
+            return false;
+        }
+        // A starred element unpacks an iterable at runtime, so its own type
+        // describes the iterable, not the names it contributes.
+        if matches!(expr, Expr::Starred(_)) {
+            return false;
+        }
+        let ty = self.expr_infer(expr, &self.error_swallower());
+        if !self.is_subset_eq(&ty, &self.heap.mk_class_type(self.stdlib.str().clone())) {
+            self.error(
+                errors,
+                expr.range(),
+                ErrorKind::BadClassDefinition,
+                format!(
+                    "`__slots__` items must be strings, not `{}`",
+                    self.for_display(ty.promote_shallow(self.stdlib))
+                ),
+            );
+        }
+        false
     }
 
     fn initial_protocol_metadata(

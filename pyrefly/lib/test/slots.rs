@@ -359,6 +359,92 @@ class C:
 );
 
 testcase!(
+    test_slots_invalid_non_string_literal,
+    r#"
+class C:
+    __slots__ = ("x", 1)  # E: `__slots__` items must be strings, not `int`
+
+    def __init__(self) -> None:
+        self.x = 1
+        self.y = 2
+"#,
+);
+
+testcase!(
+    test_slots_invalid_non_string_dict_key,
+    r#"
+class C:
+    __slots__ = {1: "doc"}  # E: `__slots__` items must be strings, not `int`
+
+    def __init__(self) -> None:
+        self.x = 1
+"#,
+);
+
+// The element type is checked even when the value is not a literal.
+testcase!(
+    test_slots_invalid_non_string_expression,
+    r#"
+LIMIT = 1
+
+class C:
+    __slots__ = (LIMIT,)  # E: `__slots__` items must be strings, not `int`
+
+    def __init__(self) -> None:
+        self.x = 1
+"#,
+);
+
+// A dynamic `str` element cannot be checked for an identifier, so the
+// declaration stays unknown and slot enforcement is disabled.
+testcase!(
+    test_slots_dynamic_string_element_is_unknown,
+    r#"
+NAME = "x"
+
+class C:
+    __slots__ = (NAME,)
+
+    def __init__(self) -> None:
+        self.x = 1
+        self.y = 2
+"#,
+);
+
+// A starred element contributes names of unknown identity; its own type is the
+// iterable's type, so it must not be reported as a non-string element.
+testcase!(
+    test_slots_starred_element_is_unknown,
+    r#"
+NAMES = ["x"]
+
+class C:
+    __slots__ = (*NAMES,)
+
+    def __init__(self) -> None:
+        self.x = 1
+        self.y = 2
+"#,
+);
+
+// An `Any` element cannot be proven to be a non-string.
+testcase!(
+    test_slots_any_element_is_unknown,
+    r#"
+from typing import Any
+
+VALUE: Any = 1
+
+class C:
+    __slots__ = (VALUE,)
+
+    def __init__(self) -> None:
+        self.x = 1
+        self.y = 2
+"#,
+);
+
+testcase!(
     test_slots_incomplete_mro_no_enforcement,
     r#"
 class X:
